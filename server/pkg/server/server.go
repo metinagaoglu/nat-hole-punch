@@ -50,7 +50,7 @@ func (u *UDPServer) Listen() {
 		}
 
 		//		fmt.Println("Received ", string(buffer[0:bytesRead]), " from ", remoteAddr)
-		client := NewClient().SetRemoteAddr(remoteAddr).SetCreateAt()
+		client := NewClient().SetRemoteAddr(remoteAddr).SetCreateAt().SetConn(u.conn)
 		u.clients[remoteAddr.String()] = client
 
 		u.router.HandleEvent(client, buffer[0:bytesRead])
