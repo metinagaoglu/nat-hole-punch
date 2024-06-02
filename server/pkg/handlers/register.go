@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
-	"strings"
 	"fmt"
+	"strings"
 	. "udp-hole-punch/pkg/models"
 )
 
@@ -30,19 +30,13 @@ func Register(client *Client, payload string) error {
 // TODO: refactor: seperate the concerns(send logic)
 func SendToClient(key string) error {
 
-	// Get Ip addreses split of string from key 
+	// Get Ip addreses split of string from key
 	var ipAdresses strings.Builder
 	for _, client := range clients[key] {
-		for _, subClient := range clients[key] {
-			if client.GetRemoteAddr().String() == subClient.GetRemoteAddr().String() {
-				continue
-			}
-			//client.Send([]byte(subClient.GetRemoteAddr().String()))
-			//client.GetConn().WriteToUDP([]byte(subClient.GetRemoteAddr().String()), client.GetRemoteAddr())
-			ipAdresses.WriteString(subClient.GetRemoteAddr().String() + ",")
-		}
+		ipAdresses.WriteString(client.GetRemoteAddr().String() + ",")
 	}
 
+	// Broadcast ip addresses to clients
 	for _, client := range clients[key] {
 		client.GetConn().WriteToUDP([]byte(strings.TrimRight(ipAdresses.String(), ",")), client.GetRemoteAddr())
 	}
