@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+
 	. "udp-hole-punch/pkg/models"
 )
 
@@ -26,8 +27,18 @@ func (r *Router) HandleEvent(client *Client, bytesRead []byte) {
 	fmt.Println("Router is handling event")
 	var request Request
 
-	json.Unmarshal(bytesRead, &request)
+	err := json.Unmarshal(bytesRead, &request)
+	if err != nil {
+		_, err = client.GetConn().WriteToUDP([]byte("Invalid request"), client.GetRemoteAddr())
+		if err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
 	fmt.Println(request.Event)
 	fmt.Println(string(request.Payload))
-	r.methods[request.Event](client, request.Payload)
+	err = r.methods[request.Event](client, request.Payload)
+	if err != nil {
+		fmt.Println(err)
+	}
 }
