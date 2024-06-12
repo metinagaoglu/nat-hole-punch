@@ -1,7 +1,7 @@
 package server
 
 import (
-	"fmt"
+	"log"
 	"net"
 
 	. "udp-hole-punch/pkg/models"
@@ -42,15 +42,16 @@ func (u *UDPServer) Bind(port int) *UDPServer {
 }
 
 func (u *UDPServer) Listen() {
-	fmt.Println("Server is listening on port 3986")
+	log.Printf("Listening on %s 🚀🚀🚀", u.conn.LocalAddr().String())
 	for {
 		buffer := make([]byte, 1024)
 		bytesRead, remoteAddr, err := u.conn.ReadFromUDP(buffer)
 		if err != nil {
+			log.Fatalf("Error reading from UDP: %v", err)
 			panic(err)
 		}
 
-		//		fmt.Println("Received ", string(buffer[0:bytesRead]), " from ", remoteAddr)
+		log.Printf("Received %s from %s", string(buffer[0:bytesRead]), remoteAddr)
 		client := NewClient().SetRemoteAddr(remoteAddr).SetCreateAt().SetConn(u.conn)
 		u.clients[remoteAddr.String()] = client
 

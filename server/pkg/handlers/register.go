@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"strings"
 
 	. "udp-hole-punch/pkg/models"
@@ -23,9 +23,8 @@ func Register(client *Client, payload string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(registerRequest.LocalIp)
-	fmt.Println(client.GetRemoteAddr())
-	fmt.Println("==========")
+
+	log.Printf("Registering client %s with key [%s]", client.GetRemoteAddr(), registerRequest.Key)
 	clients[registerRequest.Key] = append(clients[registerRequest.Key], client)
 	err = SendToClient(registerRequest.Key)
 	if err != nil {
@@ -41,6 +40,8 @@ func SendToClient(key string) error {
 	for _, client := range clients[key] {
 		ipAddresses.WriteString(client.GetRemoteAddr().String() + ",")
 	}
+
+	log.Printf("Broadcasting ip addresses to clients with key [%s] , and with clients [%s]", key, ipAddresses.String())
 
 	// Broadcast ip addresses to clients
 	for _, client := range clients[key] {
