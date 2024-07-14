@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "udp-hole-punch/pkg/models"
+	. "udp-hole-punch/pkg/repositories"
 )
 
 type RegisterRequest struct {
@@ -25,7 +26,10 @@ func Register(client *Client, payload string) error {
 	}
 
 	log.Printf("Registering client %s with key [%s]", client.GetRemoteAddr(), registerRequest.Key)
-	clients[registerRequest.Key] = append(clients[registerRequest.Key], client)
+	repository := GetRepository()
+	repository.AddClient(registerRequest.Key, client, 60)
+
+	//clients[registerRequest.Key] = append(clients[registerRequest.Key], client)
 	err = SendToClient(registerRequest.Key)
 	if err != nil {
 		return err
@@ -33,18 +37,22 @@ func Register(client *Client, payload string) error {
 	return nil
 }
 
-// TODO: refactor: seperate the concerns(send logic)
 func SendToClient(key string) error {
+	repository := GetRepository()
+	clients, _ := repository.GetClientsByKey(key)
+
+	log.Printf("Sending ip addresses to clients", key, clients)
+
 	// Get Ip addresses split of string from key
 	var ipAddresses strings.Builder
-	for _, client := range clients[key] {
+	for _, client := range clients {
 		ipAddresses.WriteString(client.GetRemoteAddr().String() + ",")
 	}
 
 	log.Printf("Broadcasting ip addresses to clients with key [%s] , and with clients [%s]", key, ipAddresses.String())
 
 	// Broadcast ip addresses to clients
-	for _, client := range clients[key] {
+	for _, client := range clients {
 		_, err := client.GetConn().WriteToUDP([]byte(strings.TrimRight(ipAddresses.String(), ",")), client.GetRemoteAddr())
 		if err != nil {
 			return err
