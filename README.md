@@ -17,10 +17,10 @@ GOOS=darwin GOARCH=amd64 go build -o client-osx *.go
 
 /client s
 
-### Examples
+### Usages
 
-/client c 192.168.0.11:3986 4545
-./client s
+go run client.go -local-address=127.0.0.1:4012 -room-key=game1
+go run client.go -local-address=127.0.0.1:4002 -room-key=game2
 
 
 ### Useful resources
