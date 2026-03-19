@@ -30,14 +30,22 @@ func (r *Router) HandleEvent(client *Client, bytesRead []byte) {
 
 	err := json.Unmarshal(bytesRead, &request)
 	if err != nil {
-		_, err = client.GetConn().WriteToUDP([]byte("Invalid request"), client.GetRemoteAddr())
-		if err != nil {
-			log.Printf("Error writing to UDP: %v", err)
+		// Only try to write back if client has a valid connection
+		if client.GetConn() != nil && client.GetRemoteAddr() != nil {
+			_, err = client.GetConn().WriteToUDP([]byte("Invalid request"), client.GetRemoteAddr())
+			if err != nil {
+				log.Printf("Error writing to UDP: %v", err)
+			}
 		}
 		return
 	}
 
 	log.Printf("Handling event [%s]", request.Event)
+	// check if the event is registered
+	if _, ok := r.methods[request.Event]; !ok {
+		log.Printf("Event not found [%s]", request.Event)
+		return
+	}
 	err = r.methods[request.Event](client, request.Payload)
 	if err != nil {
 		fmt.Println(err)

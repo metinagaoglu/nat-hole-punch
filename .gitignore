@@ -1,2 +1,29 @@
 *-exe
+*.exe
 build/*
+
+# Binaries
+udp-server
+udp-client
+main
+*.test
+*.out
+coverage.out
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.log
+
+# Docker volumes
+redis-data/

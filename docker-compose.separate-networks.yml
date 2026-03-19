@@ -1,0 +1,158 @@
+# This configuration simulates real-world NAT scenario with separate networks
+# Server is on a "public" network, clients are on separate "private" networks
+
+networks:
+  public-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.100.0.0/16
+
+  nat-network-1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.101.0.0/16
+
+  nat-network-2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.102.0.0/16
+
+services:
+  # UDP Hole Punch Server - Public Network
+  udp-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: udp-server-public
+    ports:
+      - "3986:3986/udp"
+    environment:
+      - SERVER_PORT=3986
+      - SERVER_HOST=0.0.0.0
+      - BUFFER_SIZE=1024
+      - CLIENT_TTL=60
+      - REPOSITORY_TYPE=memory
+    restart: unless-stopped
+    networks:
+      public-network:
+        ipv4_address: 10.100.0.10
+    healthcheck:
+      test: ["CMD", "nc", "-uz", "localhost", "3986"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # NAT Router 1 - Connects Client 1 network to public network
+  nat-router-1:
+    image: alpine:latest
+    container_name: nat-router-1
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+    command: >
+      sh -c "apk add --no-cache iptables iproute2 &&
+             sleep 2 &&
+             iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
+             iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT &&
+             iptables -A FORWARD -i eth0 -o eth1 -m state --state RELATED,ESTABLISHED -j ACCEPT &&
+             echo 'NAT Router 1 started' &&
+             tail -f /dev/null"
+    networks:
+      public-network:
+        ipv4_address: 10.100.0.20
+      nat-network-1:
+        ipv4_address: 10.101.0.1
+    restart: unless-stopped
+
+  # NAT Router 2 - Connects Client 2 network to public network
+  nat-router-2:
+    image: alpine:latest
+    container_name: nat-router-2
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+    command: >
+      sh -c "apk add --no-cache iptables iproute2 &&
+             sleep 2 &&
+             iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
+             iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT &&
+             iptables -A FORWARD -i eth0 -o eth1 -m state --state RELATED,ESTABLISHED -j ACCEPT &&
+             echo 'NAT Router 2 started' &&
+             tail -f /dev/null"
+    networks:
+      public-network:
+        ipv4_address: 10.100.0.30
+      nat-network-2:
+        ipv4_address: 10.102.0.1
+    restart: unless-stopped
+
+  # Client 1 - Behind NAT Router 1
+  client1:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client1-nat1
+    command: [
+      "-signal-address=10.100.0.10:3986",
+      "-local-address=0.0.0.0:4000",
+      "-room-key=nat-test-room"
+    ]
+    depends_on:
+      - udp-server
+      - nat-router-1
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      nat-network-1:
+        ipv4_address: 10.101.0.10
+
+  # Client 2 - Behind NAT Router 2
+  client2:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client2-nat2
+    command: [
+      "-signal-address=10.100.0.10:3986",
+      "-local-address=0.0.0.0:4001",
+      "-room-key=nat-test-room"
+    ]
+    depends_on:
+      - udp-server
+      - nat-router-2
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      nat-network-2:
+        ipv4_address: 10.102.0.10
+
+  # Client 3 - Behind NAT Router 1 (same network as Client 1)
+  client3:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client3-nat1
+    command: [
+      "-signal-address=10.100.0.10:3986",
+      "-local-address=0.0.0.0:4002",
+      "-room-key=nat-test-room"
+    ]
+    depends_on:
+      - udp-server
+      - nat-router-1
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      nat-network-1:
+        ipv4_address: 10.101.0.11

@@ -1,0 +1,105 @@
+# Simplified network testing without NAT routers
+# Useful for basic multi-network testing on macOS
+
+networks:
+  server-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+
+  client-network-1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.11.0.0/24
+
+  client-network-2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.12.0.0/24
+
+services:
+  # UDP Hole Punch Server - On server network and all client networks
+  udp-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: udp-server
+    ports:
+      - "3986:3986/udp"
+    environment:
+      - SERVER_PORT=3986
+      - SERVER_HOST=0.0.0.0
+      - BUFFER_SIZE=1024
+      - CLIENT_TTL=60
+      - REPOSITORY_TYPE=memory
+    restart: unless-stopped
+    networks:
+      server-network:
+        ipv4_address: 10.10.0.10
+      client-network-1:
+        ipv4_address: 10.11.0.10
+      client-network-2:
+        ipv4_address: 10.12.0.10
+
+  # Client 1 - On client-network-1
+  client1:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client1
+    command: [
+      "-signal-address=10.11.0.10:3986",
+      "-local-address=0.0.0.0:4000",
+      "-room-key=test-room"
+    ]
+    depends_on:
+      - udp-server
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      client-network-1:
+        ipv4_address: 10.11.0.20
+
+  # Client 2 - On client-network-2
+  client2:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client2
+    command: [
+      "-signal-address=10.12.0.10:3986",
+      "-local-address=0.0.0.0:4001",
+      "-room-key=test-room"
+    ]
+    depends_on:
+      - udp-server
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      client-network-2:
+        ipv4_address: 10.12.0.20
+
+  # Client 3 - On client-network-1 (same as client1)
+  client3:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client3
+    command: [
+      "-signal-address=10.11.0.10:3986",
+      "-local-address=0.0.0.0:4002",
+      "-room-key=test-room"
+    ]
+    depends_on:
+      - udp-server
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      client-network-1:
+        ipv4_address: 10.11.0.21

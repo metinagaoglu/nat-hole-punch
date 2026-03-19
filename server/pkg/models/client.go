@@ -44,3 +44,7 @@ func (c *Client) GetRemoteAddr() *net.UDPAddr {
 func (c *Client) GetCreateAt() int64 {
 	return c.createAt
 }
+
+func (c *Client) CompareAddr(addr *net.UDPAddr) bool {
+	return c.remoteAddr.IP.String() == addr.IP.String() && c.remoteAddr.Port == addr.Port
+}

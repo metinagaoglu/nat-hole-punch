@@ -1,0 +1,91 @@
+version: '3.9'
+
+networks:
+  nat-network:
+    driver: bridge
+
+services:
+  # UDP Hole Punch Server
+  udp-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: udp-server
+    ports:
+      - "3986:3986/udp"
+    environment:
+      - SERVER_PORT=3986
+      - SERVER_HOST=0.0.0.0
+      - BUFFER_SIZE=1024
+      - CLIENT_TTL=60
+      - REPOSITORY_TYPE=memory
+    restart: unless-stopped
+    networks:
+      - nat-network
+    healthcheck:
+      test: ["CMD", "nc", "-uz", "localhost", "3986"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Test Client 1
+  client1:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client1
+    command: [
+      "-signal-address=udp-server:3986",
+      "-local-address=0.0.0.0:4000",
+      "-room-key=test-room"
+    ]
+    depends_on:
+      - udp-server
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      - nat-network
+
+  # Test Client 2
+  client2:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: client2
+    command: [
+      "-signal-address=udp-server:3986",
+      "-local-address=0.0.0.0:4001",
+      "-room-key=test-room"
+    ]
+    depends_on:
+      - udp-server
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    networks:
+      - nat-network
+
+  # Redis (for future repository implementation)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - nat-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  redis-data:
+    driver: local
+
