@@ -1,7 +1,7 @@
 package adapters
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 
 	. "udp-hole-punch/pkg/models"
@@ -26,7 +26,7 @@ func (r *InMemoryRepository) AddClient(key string, client *Client, ttl int32) er
 	defer r.mu.Unlock()
 
 	r.clients[key] = append(r.clients[key], client)
-	log.Printf("Client added to room [%s], total clients: %d", key, len(r.clients[key]))
+	slog.Debug("Client added", "room", key, "total", len(r.clients[key]))
 	return nil
 }
 
@@ -40,12 +40,12 @@ func (r *InMemoryRepository) RemoveClient(key string, client *Client) error {
 		if c.GetRemoteAddr() != nil && client.CompareAddr(c.GetRemoteAddr()) {
 			// Remove client by swapping with last element and truncating
 			r.clients[key] = append(clients[:i], clients[i+1:]...)
-			log.Printf("Client removed from room [%s], remaining clients: %d", key, len(r.clients[key]))
+			slog.Debug("Client removed", "room", key, "remaining", len(r.clients[key]))
 			return nil
 		}
 	}
 
-	log.Printf("Client not found in room [%s]", key)
+	slog.Debug("Client not found in room", "room", key)
 	return nil
 }
 

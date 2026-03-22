@@ -1,7 +1,7 @@
 package repositories
 
 import (
-	"log"
+	"log/slog"
 
 	"udp-hole-punch/pkg/config"
 	"udp-hole-punch/pkg/repositories/adapters"
@@ -19,15 +19,15 @@ func CreateRepository(cfg *config.Config) IRepository {
 
 		redisRepo, err := adapters.NewRedisRepository(redisConfig)
 		if err != nil {
-			log.Printf("Failed to initialize Redis repository: %v, falling back to in-memory", err)
+			slog.Warn("Failed to initialize Redis, falling back to in-memory", "error", err)
 			return adapters.NewInMemoryRepository()
 		}
 
-		log.Printf("Using Redis repository at %s", redisConfig.Addr)
+		slog.Info("Using Redis repository", "addr", redisConfig.Addr)
 		return redisRepo
 
 	default:
-		log.Printf("Using in-memory repository")
+		slog.Info("Using in-memory repository")
 		return adapters.NewInMemoryRepository()
 	}
 }

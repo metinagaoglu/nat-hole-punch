@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 
 	. "udp-hole-punch/pkg/models"
 )
@@ -27,7 +27,7 @@ func logout(ctx *HandlerContext, client *Client, payload string) error {
 		return err
 	}
 
-	log.Printf("Logout client %s with key [%s]", client.GetRemoteAddr(), logoutRequest.Key)
+	slog.Info("Client logout", "addr", client.GetRemoteAddr(), "room", logoutRequest.Key)
 	err = ctx.repository.RemoveClient(logoutRequest.Key, client)
 	if err != nil {
 		return err

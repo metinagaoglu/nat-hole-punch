@@ -19,6 +19,10 @@ type Config struct {
 	// Client configuration
 	ClientTTL     int // Time to live for client registration in seconds
 
+	// Logging configuration
+	LogLevel  string // "debug", "info", "warn", "error"
+	LogFormat string // "text" or "json"
+
 	// Repository configuration
 	RepositoryType string // "memory" or "redis"
 	RedisAddr      string
@@ -35,6 +39,8 @@ func DefaultConfig() *Config {
 		ReadTimeout:    30 * time.Second,
 		WriteTimeout:   30 * time.Second,
 		ClientTTL:      60,
+		LogLevel:       "info",
+		LogFormat:      "text",
 		RepositoryType: "memory",
 		RedisAddr:      "localhost:6379",
 		RedisPassword:  "",
@@ -83,6 +89,15 @@ func LoadFromEnv() (*Config, error) {
 			return nil, fmt.Errorf("CLIENT_TTL must be between 10 and 3600 seconds")
 		}
 		cfg.ClientTTL = t
+	}
+
+	// Load logging configuration
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		cfg.LogLevel = logLevel
+	}
+
+	if logFormat := os.Getenv("LOG_FORMAT"); logFormat != "" {
+		cfg.LogFormat = logFormat
 	}
 
 	// Load repository configuration

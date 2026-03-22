@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -65,7 +65,7 @@ func (u *UDPServer) Listen() error {
 		return fmt.Errorf("server not bound to any address")
 	}
 
-	log.Printf("Listening on %s", u.conn.LocalAddr().String())
+	slog.Info("Listening", "addr", u.conn.LocalAddr().String())
 	for {
 		select {
 		case <-u.ctx.Done():
@@ -76,17 +76,16 @@ func (u *UDPServer) Listen() error {
 		buffer := make([]byte, u.bufferSize)
 		bytesRead, remoteAddr, err := u.conn.ReadFromUDP(buffer)
 		if err != nil {
-			// Check if shutdown was requested
 			select {
 			case <-u.ctx.Done():
 				return nil
 			default:
-				log.Printf("Error reading from UDP: %v", err)
+				slog.Error("Error reading from UDP", "error", err)
 				continue
 			}
 		}
 
-		log.Printf("Received %s from %s", string(buffer[0:bytesRead]), remoteAddr)
+		slog.Debug("Received message", "from", remoteAddr, "data", string(buffer[0:bytesRead]))
 		client := NewClient().SetRemoteAddr(remoteAddr).SetCreateAt().SetConn(u.conn)
 
 		u.mu.Lock()
@@ -99,12 +98,12 @@ func (u *UDPServer) Listen() error {
 
 // Shutdown gracefully stops the server
 func (u *UDPServer) Shutdown() {
-	log.Println("Shutting down server...")
+	slog.Info("Shutting down server")
 	u.cancel()
 
 	if u.conn != nil {
 		u.conn.Close()
 	}
 
-	log.Println("Server stopped")
+	slog.Info("Server stopped")
 }

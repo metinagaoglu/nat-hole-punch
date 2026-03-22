@@ -1,13 +1,14 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"udp-hole-punch/pkg/config"
 	"udp-hole-punch/pkg/handlers"
+	"udp-hole-punch/pkg/logger"
 	"udp-hole-punch/pkg/repositories"
 	"udp-hole-punch/pkg/router"
 	"udp-hole-punch/pkg/server"
@@ -16,16 +17,19 @@ import (
 func main() {
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		log.Printf("Failed to load configuration: %v", err)
+		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		log.Printf("Invalid configuration: %v", err)
+		slog.Error("Invalid configuration", "error", err)
 		os.Exit(1)
 	}
 
-	log.Printf("Starting UDP Hole Punch Server on %s:%d", cfg.ServerHost, cfg.ServerPort)
+	// Initialize structured logger
+	logger.Init(cfg.LogLevel, cfg.LogFormat)
+
+	slog.Info("Starting UDP Hole Punch Server", "host", cfg.ServerHost, "port", cfg.ServerPort)
 
 	repo := repositories.CreateRepository(cfg)
 	handlerCtx := handlers.NewHandlerContext(repo, cfg.ClientTTL)
@@ -35,11 +39,10 @@ func main() {
 
 	boundServer, err := srv.Bind()
 	if err != nil {
-		log.Printf("Failed to bind server: %v", err)
+		slog.Error("Failed to bind server", "error", err)
 		os.Exit(1)
 	}
 
-	// Graceful shutdown on SIGINT/SIGTERM
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
@@ -50,11 +53,11 @@ func main() {
 
 	select {
 	case sig := <-sigChan:
-		log.Printf("Received signal: %v, shutting down...", sig)
+		slog.Info("Received signal, shutting down", "signal", sig)
 		boundServer.Shutdown()
 	case err := <-errChan:
 		if err != nil {
-			log.Printf("Server error: %v", err)
+			slog.Error("Server error", "error", err)
 			os.Exit(1)
 		}
 	}

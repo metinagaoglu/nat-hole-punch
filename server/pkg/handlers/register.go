@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 
 	. "udp-hole-punch/pkg/models"
@@ -28,7 +28,7 @@ func register(ctx *HandlerContext, client *Client, payload string) error {
 		return err
 	}
 
-	log.Printf("Registering client %s with key [%s]", client.GetRemoteAddr(), registerRequest.Key)
+	slog.Info("Registering client", "addr", client.GetRemoteAddr(), "room", registerRequest.Key)
 	ctx.repository.AddClient(registerRequest.Key, client, ctx.clientTTL)
 
 	return broadcastPeers(ctx, registerRequest.Key)
@@ -36,17 +36,17 @@ func register(ctx *HandlerContext, client *Client, payload string) error {
 
 func broadcastPeers(ctx *HandlerContext, key string) error {
 	if ctx.conn == nil {
-		log.Printf("Warning: server connection not set, cannot send to clients")
+		slog.Warn("Server connection not set, cannot broadcast")
 		return nil
 	}
 
 	clients, err := ctx.repository.GetClientsByKey(key)
 	if err != nil {
-		log.Printf("Error getting clients by key [%s]", key)
+		slog.Error("Failed to get clients", "room", key, "error", err)
 		return err
 	}
 
-	log.Printf("Sending ip addresses to clients with key [%s] and %d clients", key, len(clients))
+	slog.Debug("Broadcasting peer list", "room", key, "client_count", len(clients))
 
 	var ipAddresses strings.Builder
 	for _, client := range clients {
@@ -56,7 +56,7 @@ func broadcastPeers(ctx *HandlerContext, key string) error {
 	}
 
 	message := []byte(strings.TrimRight(ipAddresses.String(), ","))
-	log.Printf("Broadcasting ip addresses to clients with key [%s], message: [%s]", key, string(message))
+	slog.Debug("Sending peer addresses", "room", key, "message", string(message))
 
 	for _, client := range clients {
 		if client.GetRemoteAddr() == nil {
@@ -65,7 +65,7 @@ func broadcastPeers(ctx *HandlerContext, key string) error {
 
 		_, err := ctx.conn.WriteToUDP(message, client.GetRemoteAddr())
 		if err != nil {
-			log.Printf("Failed to send to %s: %v", client.GetRemoteAddr(), err)
+			slog.Error("Failed to send to client", "addr", client.GetRemoteAddr(), "error", err)
 			continue
 		}
 	}
