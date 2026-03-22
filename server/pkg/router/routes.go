@@ -1,12 +1,12 @@
 package router
 
 import (
-	h "udp-hole-punch/pkg/handlers"
+	"udp-hole-punch/pkg/handlers"
 )
 
-func InitializeRoutes() *Router {
+func InitializeRoutes(ctx *handlers.HandlerContext) *Router {
 	router := NewRouter()
-	router.AddRoute("register", h.Register)
-	router.AddRoute("logout", h.Logout)
+	router.AddRoute("register", ctx.RegisterHandler())
+	router.AddRoute("logout", ctx.LogoutHandler())
 	return router
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net"
 
+	"udp-hole-punch/pkg/models"
 	"udp-hole-punch/pkg/repositories"
 )
 
@@ -14,24 +15,27 @@ type HandlerContext struct {
 }
 
 // NewHandlerContext creates a new handler context with required dependencies
-func NewHandlerContext(repo repositories.IRepository, conn *net.UDPConn) *HandlerContext {
+func NewHandlerContext(repo repositories.IRepository) *HandlerContext {
 	return &HandlerContext{
 		repository: repo,
-		conn:       conn,
 	}
 }
 
-// GetRepository returns the repository instance
-func (h *HandlerContext) GetRepository() repositories.IRepository {
-	return h.repository
-}
-
-// GetConnection returns the UDP connection
-func (h *HandlerContext) GetConnection() *net.UDPConn {
-	return h.conn
-}
-
 // SetConnection updates the UDP connection (called after server binds)
-func (h *HandlerContext) SetConnection(conn *net.UDPConn) {
-	h.conn = conn
+func (ctx *HandlerContext) SetConnection(conn *net.UDPConn) {
+	ctx.conn = conn
+}
+
+// RegisterHandler returns a HandlerFunc that handles client registration
+func (ctx *HandlerContext) RegisterHandler() models.HandlerFunc {
+	return func(client *models.Client, payload string) error {
+		return register(ctx, client, payload)
+	}
+}
+
+// LogoutHandler returns a HandlerFunc that handles client logout
+func (ctx *HandlerContext) LogoutHandler() models.HandlerFunc {
+	return func(client *models.Client, payload string) error {
+		return logout(ctx, client, payload)
+	}
 }

@@ -5,13 +5,21 @@ import (
 	"testing"
 
 	"udp-hole-punch/pkg/config"
+	"udp-hole-punch/pkg/handlers"
 	m "udp-hole-punch/pkg/models"
+	"udp-hole-punch/pkg/repositories/adapters"
 	r "udp-hole-punch/pkg/router"
 )
 
-func TestNewUDPServer(t *testing.T) {
+func newTestServer() *UDPServer {
 	cfg := config.DefaultConfig()
-	server := NewUDPServer(cfg)
+	repo := adapters.NewInMemoryRepository()
+	ctx := handlers.NewHandlerContext(repo)
+	return NewUDPServer(cfg, ctx)
+}
+
+func TestNewUDPServer(t *testing.T) {
+	server := newTestServer()
 
 	if server == nil {
 		t.Error("NewUDPServer() returned nil")
@@ -33,17 +41,16 @@ func TestNewUDPServer(t *testing.T) {
 		t.Error("NewUDPServer() returned server with nil config")
 	}
 
+	cfg := config.DefaultConfig()
 	if server.bufferSize != cfg.BufferSize {
 		t.Errorf("NewUDPServer() bufferSize = %d, want %d", server.bufferSize, cfg.BufferSize)
 	}
 }
 
 func TestUDPServer_SetRoutes(t *testing.T) {
-	cfg := config.DefaultConfig()
-	server := NewUDPServer(cfg)
+	server := newTestServer()
 	router := r.NewRouter()
 
-	// HandlerFunc func(client *Client, payload string) error
 	router.AddRoute("test", func(client *m.Client, payload string) error {
 		fmt.Println("test")
 		return nil
@@ -57,8 +64,7 @@ func TestUDPServer_SetRoutes(t *testing.T) {
 }
 
 func TestUDPServer_Bind(t *testing.T) {
-	cfg := config.DefaultConfig()
-	server := NewUDPServer(cfg)
+	server := newTestServer()
 
 	boundServer, err := server.Bind()
 	if err != nil {
@@ -67,12 +73,6 @@ func TestUDPServer_Bind(t *testing.T) {
 
 	if boundServer.conn == nil {
 		t.Error("Bind() did not set conn")
-	}
-
-	expectedAddr := fmt.Sprintf("[::]:% d", cfg.ServerPort)
-	if boundServer.conn.LocalAddr().String() != expectedAddr {
-		t.Logf("Bind() addr = %s, expected = %s (both are valid)",
-			boundServer.conn.LocalAddr().String(), expectedAddr)
 	}
 
 	// Cleanup

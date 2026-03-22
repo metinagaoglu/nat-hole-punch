@@ -2,34 +2,32 @@ package repositories
 
 import (
 	"testing"
+
+	"udp-hole-punch/pkg/config"
 )
 
-func TestGetRepository(t *testing.T) {
-	// Reset repository to nil for testing
-	repository = nil
+func TestCreateRepository_DefaultMemory(t *testing.T) {
+	cfg := config.DefaultConfig()
 
-	repo := GetRepository()
-
+	repo := CreateRepository(cfg)
 	if repo == nil {
-		t.Fatal("GetRepository() returned nil")
+		t.Fatal("CreateRepository() returned nil")
 	}
 
-	// Test singleton pattern - should return the same instance
-	repo2 := GetRepository()
-
-	if repo != repo2 {
-		t.Error("GetRepository() should return the same instance (singleton pattern)")
+	_, ok := repo.(IRepository)
+	if !ok {
+		t.Error("CreateRepository() should return an object implementing IRepository")
 	}
 }
 
-func TestGetRepository_ReturnsIRepository(t *testing.T) {
-	repository = nil
+func TestCreateRepository_InvalidRedis(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RepositoryType = "redis"
+	cfg.RedisAddr = "localhost:19999" // Non-existent Redis
 
-	repo := GetRepository()
-
-	// Type assertion to verify it implements IRepository
-	_, ok := repo.(IRepository)
-	if !ok {
-		t.Error("GetRepository() should return an object implementing IRepository")
+	// Should fall back to in-memory
+	repo := CreateRepository(cfg)
+	if repo == nil {
+		t.Fatal("CreateRepository() should fall back to in-memory when Redis fails")
 	}
 }

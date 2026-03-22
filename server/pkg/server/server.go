@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 
 	"udp-hole-punch/pkg/config"
 	"udp-hole-punch/pkg/handlers"
@@ -12,17 +13,20 @@ import (
 )
 
 type UDPServer struct {
+	mu         sync.RWMutex
 	conn       *net.UDPConn
 	clients    map[string]*Client
 	router     *Router
+	handlerCtx *handlers.HandlerContext
 	config     *config.Config
 	bufferSize int
 }
 
-func NewUDPServer(cfg *config.Config) *UDPServer {
+func NewUDPServer(cfg *config.Config, handlerCtx *handlers.HandlerContext) *UDPServer {
 	return &UDPServer{
 		conn:       nil,
-		clients:    map[string]*Client{},
+		clients:    make(map[string]*Client),
+		handlerCtx: handlerCtx,
 		config:     cfg,
 		bufferSize: cfg.BufferSize,
 	}
@@ -45,6 +49,10 @@ func (u *UDPServer) Bind() (*UDPServer, error) {
 	}
 
 	u.conn = conn
+
+	// Inject the bound connection into handler context
+	u.handlerCtx.SetConnection(conn)
+
 	return u, nil
 }
 
@@ -53,11 +61,7 @@ func (u *UDPServer) Listen() error {
 		return fmt.Errorf("server not bound to any address")
 	}
 
-	// Set server connection for handlers to use
-	// This allows handlers to send messages using server's connection
-	handlers.SetServerConnection(u.conn)
-
-	log.Printf("Listening on %s 🚀🚀🚀", u.conn.LocalAddr().String())
+	log.Printf("Listening on %s", u.conn.LocalAddr().String())
 	for {
 		buffer := make([]byte, u.bufferSize)
 		bytesRead, remoteAddr, err := u.conn.ReadFromUDP(buffer)
@@ -68,9 +72,11 @@ func (u *UDPServer) Listen() error {
 
 		log.Printf("Received %s from %s", string(buffer[0:bytesRead]), remoteAddr)
 		client := NewClient().SetRemoteAddr(remoteAddr).SetCreateAt().SetConn(u.conn)
+
+		u.mu.Lock()
 		u.clients[remoteAddr.String()] = client
+		u.mu.Unlock()
 
 		u.router.HandleEvent(client, buffer[0:bytesRead])
 	}
 }
-

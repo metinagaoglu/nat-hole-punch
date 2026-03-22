@@ -5,139 +5,106 @@ import (
 	"testing"
 
 	"udp-hole-punch/pkg/models"
-	"udp-hole-punch/pkg/repositories"
 	"udp-hole-punch/pkg/repositories/adapters"
 )
 
-func setupTestRepository() {
-	// Reset repository to use in-memory for testing
-	repositories.SetRepository(adapters.NewInMemoryRepository())
+func newTestContext() *HandlerContext {
+	repo := adapters.NewInMemoryRepository()
+	return NewHandlerContext(repo)
 }
 
 func TestRegister(t *testing.T) {
-	setupTestRepository()
+	ctx := newTestContext()
 
 	client := models.NewClient()
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:1234")
-	localAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	conn, err := net.ListenUDP("udp", localAddr)
-	if err != nil {
-		t.Fatalf("ListenUDP error = %v", err)
-	}
-	defer conn.Close()
-
-	client.SetRemoteAddr(addr).SetConn(conn)
+	client.SetRemoteAddr(addr)
 
 	payload := `{"local_ip":"127.0.0.1:1234","key":"test-room"}`
 
-	err = Register(client, payload)
+	err := register(ctx, client, payload)
 	if err != nil {
-		t.Errorf("Register() error = %v", err)
+		t.Errorf("register() error = %v", err)
 	}
 
-	// Verify client was added to repository
-	repo := repositories.GetRepository()
-	clients, _ := repo.GetClientsByKey("test-room")
-
+	clients, _ := ctx.repository.GetClientsByKey("test-room")
 	if len(clients) != 1 {
-		t.Errorf("Register() should add client to repository, got %d clients", len(clients))
+		t.Errorf("register() should add client to repository, got %d clients", len(clients))
 	}
 }
 
 func TestRegister_InvalidJSON(t *testing.T) {
-	setupTestRepository()
+	ctx := newTestContext()
 
 	client := models.NewClient()
 	invalidPayload := `{invalid json}`
 
-	err := Register(client, invalidPayload)
+	err := register(ctx, client, invalidPayload)
 	if err == nil {
-		t.Error("Register() should return error for invalid JSON")
+		t.Error("register() should return error for invalid JSON")
 	}
 }
 
 func TestRegister_MultipleClients(t *testing.T) {
-	setupTestRepository()
-
-	localAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	conn, err := net.ListenUDP("udp", localAddr)
-	if err != nil {
-		t.Fatalf("ListenUDP error = %v", err)
-	}
-	defer conn.Close()
+	ctx := newTestContext()
 
 	addr1, _ := net.ResolveUDPAddr("udp", "127.0.0.1:1234")
-	client1 := models.NewClient().SetRemoteAddr(addr1).SetConn(conn)
+	client1 := models.NewClient().SetRemoteAddr(addr1)
 
 	addr2, _ := net.ResolveUDPAddr("udp", "127.0.0.1:5678")
-	client2 := models.NewClient().SetRemoteAddr(addr2).SetConn(conn)
+	client2 := models.NewClient().SetRemoteAddr(addr2)
 
 	payload1 := `{"local_ip":"127.0.0.1:1234","key":"game-room"}`
 	payload2 := `{"local_ip":"127.0.0.1:5678","key":"game-room"}`
 
-	Register(client1, payload1)
-	Register(client2, payload2)
+	register(ctx, client1, payload1)
+	register(ctx, client2, payload2)
 
-	repo := repositories.GetRepository()
-	clients, _ := repo.GetClientsByKey("game-room")
-
+	clients, _ := ctx.repository.GetClientsByKey("game-room")
 	if len(clients) != 2 {
-		t.Errorf("Register() should add multiple clients, got %d", len(clients))
+		t.Errorf("register() should add multiple clients, got %d", len(clients))
 	}
 }
 
 func TestLogout(t *testing.T) {
-	setupTestRepository()
-
-	localAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	conn, err := net.ListenUDP("udp", localAddr)
-	if err != nil {
-		t.Fatalf("ListenUDP error = %v", err)
-	}
-	defer conn.Close()
+	ctx := newTestContext()
 
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:1234")
-	client := models.NewClient().SetRemoteAddr(addr).SetConn(conn)
+	client := models.NewClient().SetRemoteAddr(addr)
 
-	// First register the client
 	registerPayload := `{"local_ip":"127.0.0.1:1234","key":"test-room"}`
-	Register(client, registerPayload)
+	register(ctx, client, registerPayload)
 
-	// Now logout
 	logoutPayload := `{"local_ip":"127.0.0.1:1234","key":"test-room"}`
-	err = Logout(client, logoutPayload)
+	err := logout(ctx, client, logoutPayload)
 	if err != nil {
-		t.Errorf("Logout() error = %v", err)
+		t.Errorf("logout() error = %v", err)
 	}
 
-	// Verify client was removed
-	repo := repositories.GetRepository()
-	clients, _ := repo.GetClientsByKey("test-room")
-
+	clients, _ := ctx.repository.GetClientsByKey("test-room")
 	if len(clients) != 0 {
-		t.Errorf("Logout() should remove client, got %d clients remaining", len(clients))
+		t.Errorf("logout() should remove client, got %d clients remaining", len(clients))
 	}
 }
 
 func TestLogout_InvalidJSON(t *testing.T) {
-	setupTestRepository()
+	ctx := newTestContext()
 
 	client := models.NewClient()
 	invalidPayload := `{invalid json}`
 
-	err := Logout(client, invalidPayload)
+	err := logout(ctx, client, invalidPayload)
 	if err == nil {
-		t.Error("Logout() should return error for invalid JSON")
+		t.Error("logout() should return error for invalid JSON")
 	}
 }
 
-func TestSendToClient_EmptyKey(t *testing.T) {
-	setupTestRepository()
+func TestBroadcastPeers_NoConnection(t *testing.T) {
+	ctx := newTestContext()
 
-	err := SendToClient("non-existent-key")
-
-	// Should handle empty key gracefully
+	// ctx.conn is nil, should handle gracefully
+	err := broadcastPeers(ctx, "non-existent-key")
 	if err != nil {
-		t.Logf("SendToClient() returned error for empty key: %v", err)
+		t.Logf("broadcastPeers() returned error: %v", err)
 	}
 }
