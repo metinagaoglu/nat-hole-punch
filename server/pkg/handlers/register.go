@@ -14,14 +14,22 @@ type RegisterRequest struct {
 }
 
 func register(ctx *HandlerContext, client *Client, payload string) error {
+	if err := validatePayload(payload); err != nil {
+		return err
+	}
+
 	var registerRequest RegisterRequest
 	err := json.Unmarshal([]byte(payload), &registerRequest)
 	if err != nil {
 		return err
 	}
 
+	if err := validateKey(registerRequest.Key); err != nil {
+		return err
+	}
+
 	log.Printf("Registering client %s with key [%s]", client.GetRemoteAddr(), registerRequest.Key)
-	ctx.repository.AddClient(registerRequest.Key, client, 60)
+	ctx.repository.AddClient(registerRequest.Key, client, ctx.clientTTL)
 
 	return broadcastPeers(ctx, registerRequest.Key)
 }

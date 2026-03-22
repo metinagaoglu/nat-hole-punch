@@ -10,7 +10,7 @@ import (
 
 func newTestContext() *HandlerContext {
 	repo := adapters.NewInMemoryRepository()
-	return NewHandlerContext(repo)
+	return NewHandlerContext(repo, 60)
 }
 
 func TestRegister(t *testing.T) {
@@ -106,5 +106,61 @@ func TestBroadcastPeers_NoConnection(t *testing.T) {
 	err := broadcastPeers(ctx, "non-existent-key")
 	if err != nil {
 		t.Logf("broadcastPeers() returned error: %v", err)
+	}
+}
+
+func TestRegister_EmptyPayload(t *testing.T) {
+	ctx := newTestContext()
+	client := models.NewClient()
+
+	err := register(ctx, client, "")
+	if err == nil {
+		t.Error("register() should reject empty payload")
+	}
+}
+
+func TestRegister_EmptyKey(t *testing.T) {
+	ctx := newTestContext()
+	client := models.NewClient()
+
+	payload := `{"local_ip":"127.0.0.1:1234","key":""}`
+	err := register(ctx, client, payload)
+	if err == nil {
+		t.Error("register() should reject empty key")
+	}
+}
+
+func TestRegister_InvalidKeyChars(t *testing.T) {
+	ctx := newTestContext()
+	client := models.NewClient()
+
+	payload := `{"local_ip":"127.0.0.1:1234","key":"room with spaces!"}`
+	err := register(ctx, client, payload)
+	if err == nil {
+		t.Error("register() should reject key with invalid characters")
+	}
+}
+
+func TestRegister_KeyTooLong(t *testing.T) {
+	ctx := newTestContext()
+	client := models.NewClient()
+
+	longKey := ""
+	for i := 0; i < 65; i++ {
+		longKey += "a"
+	}
+	payload := `{"local_ip":"127.0.0.1:1234","key":"` + longKey + `"}`
+	err := register(ctx, client, payload)
+	if err == nil {
+		t.Error("register() should reject key longer than 64 chars")
+	}
+}
+
+func TestValidateKey_ValidKeys(t *testing.T) {
+	validKeys := []string{"room-1", "game_room", "TestRoom", "abc123", "my-game-room_v2"}
+	for _, key := range validKeys {
+		if err := validateKey(key); err != nil {
+			t.Errorf("validateKey(%q) should be valid, got error: %v", key, err)
+		}
 	}
 }

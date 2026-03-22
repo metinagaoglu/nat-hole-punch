@@ -12,12 +12,14 @@ import (
 type HandlerContext struct {
 	repository repositories.IRepository
 	conn       *net.UDPConn
+	clientTTL  int32
 }
 
 // NewHandlerContext creates a new handler context with required dependencies
-func NewHandlerContext(repo repositories.IRepository) *HandlerContext {
+func NewHandlerContext(repo repositories.IRepository, clientTTL int) *HandlerContext {
 	return &HandlerContext{
 		repository: repo,
+		clientTTL:  int32(clientTTL),
 	}
 }
 

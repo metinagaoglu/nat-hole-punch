@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"udp-hole-punch/pkg/config"
 	"udp-hole-punch/pkg/handlers"
@@ -25,13 +27,9 @@ func main() {
 
 	log.Printf("Starting UDP Hole Punch Server on %s:%d", cfg.ServerHost, cfg.ServerPort)
 
-	// Create repository based on configuration
 	repo := repositories.CreateRepository(cfg)
+	handlerCtx := handlers.NewHandlerContext(repo, cfg.ClientTTL)
 
-	// Create handler context with injected dependencies
-	handlerCtx := handlers.NewHandlerContext(repo)
-
-	// Initialize server and routes
 	srv := server.NewUDPServer(cfg, handlerCtx).
 		SetRoutes(router.InitializeRoutes(handlerCtx))
 
@@ -41,8 +39,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := boundServer.Listen(); err != nil {
-		log.Printf("Server error: %v", err)
-		os.Exit(1)
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- boundServer.Listen()
+	}()
+
+	select {
+	case sig := <-sigChan:
+		log.Printf("Received signal: %v, shutting down...", sig)
+		boundServer.Shutdown()
+	case err := <-errChan:
+		if err != nil {
+			log.Printf("Server error: %v", err)
+			os.Exit(1)
+		}
 	}
 }

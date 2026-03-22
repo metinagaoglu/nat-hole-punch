@@ -14,7 +14,7 @@ import (
 func newTestServer() *UDPServer {
 	cfg := config.DefaultConfig()
 	repo := adapters.NewInMemoryRepository()
-	ctx := handlers.NewHandlerContext(repo)
+	ctx := handlers.NewHandlerContext(repo, 60)
 	return NewUDPServer(cfg, ctx)
 }
 

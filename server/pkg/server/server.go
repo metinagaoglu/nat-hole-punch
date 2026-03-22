@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -20,15 +21,20 @@ type UDPServer struct {
 	handlerCtx *handlers.HandlerContext
 	config     *config.Config
 	bufferSize int
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 func NewUDPServer(cfg *config.Config, handlerCtx *handlers.HandlerContext) *UDPServer {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &UDPServer{
 		conn:       nil,
 		clients:    make(map[string]*Client),
 		handlerCtx: handlerCtx,
 		config:     cfg,
 		bufferSize: cfg.BufferSize,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -49,8 +55,6 @@ func (u *UDPServer) Bind() (*UDPServer, error) {
 	}
 
 	u.conn = conn
-
-	// Inject the bound connection into handler context
 	u.handlerCtx.SetConnection(conn)
 
 	return u, nil
@@ -63,11 +67,23 @@ func (u *UDPServer) Listen() error {
 
 	log.Printf("Listening on %s", u.conn.LocalAddr().String())
 	for {
+		select {
+		case <-u.ctx.Done():
+			return nil
+		default:
+		}
+
 		buffer := make([]byte, u.bufferSize)
 		bytesRead, remoteAddr, err := u.conn.ReadFromUDP(buffer)
 		if err != nil {
-			log.Printf("Error reading from UDP: %v", err)
-			continue
+			// Check if shutdown was requested
+			select {
+			case <-u.ctx.Done():
+				return nil
+			default:
+				log.Printf("Error reading from UDP: %v", err)
+				continue
+			}
 		}
 
 		log.Printf("Received %s from %s", string(buffer[0:bytesRead]), remoteAddr)
@@ -79,4 +95,16 @@ func (u *UDPServer) Listen() error {
 
 		u.router.HandleEvent(client, buffer[0:bytesRead])
 	}
+}
+
+// Shutdown gracefully stops the server
+func (u *UDPServer) Shutdown() {
+	log.Println("Shutting down server...")
+	u.cancel()
+
+	if u.conn != nil {
+		u.conn.Close()
+	}
+
+	log.Println("Server stopped")
 }
