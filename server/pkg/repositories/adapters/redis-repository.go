@@ -105,6 +105,32 @@ func (r *RedisRepository) RemoveClient(key string, client *models.Client) error 
 	return nil
 }
 
+// RefreshClient extends TTL for all rooms containing this client address
+func (r *RedisRepository) RefreshClient(addr string, ttl int32) {
+	keys, err := r.client.Keys(r.ctx, "room:*:clients").Result()
+	if err != nil {
+		return
+	}
+
+	duration := time.Duration(ttl) * time.Second
+	for _, key := range keys {
+		members, err := r.client.SMembers(r.ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		for _, member := range members {
+			var clientData map[string]interface{}
+			if err := json.Unmarshal([]byte(member), &clientData); err != nil {
+				continue
+			}
+			if a, ok := clientData["remote_addr"].(string); ok && a == addr {
+				r.client.Expire(r.ctx, key, duration)
+				break
+			}
+		}
+	}
+}
+
 // GetClients returns all clients across all rooms
 func (r *RedisRepository) GetClients() ([]*models.Client, error) {
 	// Get all room keys

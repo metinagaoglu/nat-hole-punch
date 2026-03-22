@@ -92,6 +92,9 @@ func (u *UDPServer) Listen() error {
 		u.clients[remoteAddr.String()] = client
 		u.mu.Unlock()
 
+		// Refresh TTL on every incoming message - keeps active clients alive
+		u.handlerCtx.RefreshClient(remoteAddr.String())
+
 		u.router.HandleEvent(client, buffer[0:bytesRead])
 	}
 }
@@ -103,6 +106,10 @@ func (u *UDPServer) Shutdown() {
 
 	if u.conn != nil {
 		u.conn.Close()
+	}
+
+	if err := u.handlerCtx.Close(); err != nil {
+		slog.Error("Failed to close handler context", "error", err)
 	}
 
 	slog.Info("Server stopped")

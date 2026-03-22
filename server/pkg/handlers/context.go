@@ -28,6 +28,16 @@ func (ctx *HandlerContext) SetConnection(conn *net.UDPConn) {
 	ctx.conn = conn
 }
 
+// RefreshClient extends a client's TTL in the repository
+func (ctx *HandlerContext) RefreshClient(addr string) {
+	ctx.repository.RefreshClient(addr, ctx.clientTTL)
+}
+
+// Close releases handler context resources (repository cleanup, etc.)
+func (ctx *HandlerContext) Close() error {
+	return ctx.repository.Close()
+}
+
 // RegisterHandler returns a HandlerFunc that handles client registration
 func (ctx *HandlerContext) RegisterHandler() models.HandlerFunc {
 	return func(client *models.Client, payload string) error {

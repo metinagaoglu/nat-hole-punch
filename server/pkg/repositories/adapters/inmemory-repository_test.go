@@ -3,23 +3,25 @@ package adapters
 import (
 	"net"
 	"testing"
+	"time"
 
 	"udp-hole-punch/pkg/models"
 )
 
 func TestNewInMemoryRepository(t *testing.T) {
 	repo := NewInMemoryRepository()
+	defer repo.Close()
 
 	if repo == nil {
 		t.Fatal("NewInMemoryRepository() returned nil")
 	}
 
-	if repo.clients == nil {
-		t.Error("NewInMemoryRepository() should initialize clients map")
+	if repo.GetRoomCount() != 0 {
+		t.Error("NewInMemoryRepository() should start with no rooms")
 	}
 
-	if len(repo.clients) != 0 {
-		t.Error("NewInMemoryRepository() should start with empty clients map")
+	if repo.GetClientCount() != 0 {
+		t.Error("NewInMemoryRepository() should start with no clients")
 	}
 }
 
@@ -40,7 +42,7 @@ func TestInMemoryRepository_AddClient(t *testing.T) {
 		t.Errorf("AddClient() clients count = %d, want 1", len(clients))
 	}
 
-	if clients[0] != client {
+	if !clients[0].CompareAddr(client.GetRemoteAddr()) {
 		t.Error("AddClient() did not add the correct client")
 	}
 }
@@ -133,21 +135,47 @@ func TestInMemoryRepository_RemoveClient_MultipleClients(t *testing.T) {
 		t.Errorf("RemoveClient() clients count = %d, want 1", len(clients))
 	}
 
-	if clients[0] != client2 {
+	if !clients[0].CompareAddr(client2.GetRemoteAddr()) {
 		t.Error("RemoveClient() removed wrong client")
 	}
 }
 
 func TestInMemoryRepository_GetClients(t *testing.T) {
 	repo := NewInMemoryRepository()
+	defer repo.Close()
 
-	// GetClients returns nil, nil - test this behavior
 	clients, err := repo.GetClients()
 	if err != nil {
 		t.Errorf("GetClients() error = %v, want nil", err)
 	}
 
-	if clients != nil {
-		t.Error("GetClients() should return nil")
+	if len(clients) != 0 {
+		t.Errorf("GetClients() should return empty slice, got %d", len(clients))
+	}
+}
+
+func TestInMemoryRepository_TTLExpiry(t *testing.T) {
+	repo := NewInMemoryRepository()
+	defer repo.Close()
+
+	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:1234")
+	client := models.NewClient().SetRemoteAddr(addr)
+
+	// Add client with 1 second TTL
+	repo.AddClient("short-lived", client, 1)
+
+	// Should exist immediately
+	clients, _ := repo.GetClientsByKey("short-lived")
+	if len(clients) != 1 {
+		t.Fatalf("Client should exist immediately after adding, got %d", len(clients))
+	}
+
+	// Wait for expiry
+	time.Sleep(2 * time.Second)
+
+	// Should be filtered out (even without cleanup tick)
+	clients, _ = repo.GetClientsByKey("short-lived")
+	if len(clients) != 0 {
+		t.Errorf("Client should be expired after TTL, got %d", len(clients))
 	}
 }

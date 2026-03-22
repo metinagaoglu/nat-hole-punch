@@ -13,6 +13,7 @@ import (
 
 func newTestServer() *UDPServer {
 	cfg := config.DefaultConfig()
+	cfg.ServerPort = 0 // Let OS assign a free port
 	repo := adapters.NewInMemoryRepository()
 	ctx := handlers.NewHandlerContext(repo, 60)
 	return NewUDPServer(cfg, ctx)
