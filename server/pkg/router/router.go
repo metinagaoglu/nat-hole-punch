@@ -2,7 +2,6 @@ package router
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 
 	. "udp-hole-punch/pkg/models"
@@ -48,6 +47,6 @@ func (r *Router) HandleEvent(client *Client, bytesRead []byte) {
 	}
 	err = r.methods[request.Event](client, request.Payload)
 	if err != nil {
-		fmt.Println(err)
+		log.Printf("Handler error for event [%s]: %v", request.Event, err)
 	}
 }
