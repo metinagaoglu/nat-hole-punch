@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/metnagaoglu/Experimental/nat-hole-punch"
+    ]
+  }
+}

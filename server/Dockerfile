@@ -1,49 +1,17 @@
-# Multi-stage build for optimized image size
-# Stage 1: Build
 FROM golang:1.23-alpine AS builder
-
-# Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
-
-# Set working directory
 WORKDIR /build
-
-# Copy go mod files
 COPY go.mod go.sum* ./
-
-# Download dependencies
 RUN go mod download
-
-# Copy source code
 COPY . .
-
-# Build the application with optimizations
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
-    -a \
-    -o udp-server \
-    ./cmd/main.go
+    -o udp-server ./cmd/server
 
-# Stage 2: Runtime
 FROM scratch
-
-# Copy timezone data
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-
-# Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Copy binary from builder
 COPY --from=builder /build/udp-server /udp-server
-
-# Copy configuration example
-COPY --from=builder /build/.env.example /.env.example
-
-# Expose UDP port
 EXPOSE 3986/udp
-
-# Run as non-root user
 USER 65534:65534
-
-# Set entrypoint
 ENTRYPOINT ["/udp-server"]
