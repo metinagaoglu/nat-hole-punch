@@ -1,26 +1,232 @@
-# NAT Hole Punching Server & Client
+# holepunch
 
 [![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![CI](https://github.com/yourusername/nat-hole-punch/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/nat-hole-punch/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A UDP hole punching implementation in Go for establishing peer-to-peer connections between devices behind NATs. Includes an interactive client with text messaging and file transfer.
+UDP hole punching library and CLI for Go. Establish peer-to-peer connections between devices behind NATs with text messaging and file transfer.
 
-## What is NAT Hole Punching?
+---
 
-NAT hole punching allows two devices behind different NATs to establish a direct connection:
+## Try It Out (clone & run)
 
-1. Both clients register with a public signaling server
-2. The server shares each client's public IP and port
-3. Clients send packets to each other's public addresses
-4. NAT devices see outgoing packets and allow return traffic
+Clone the repo and start experimenting in under a minute.
+
+### 1. Text Chat Between Two Peers
+
+```bash
+git clone https://github.com/metnagaoglu/holepunch.git
+cd holepunch
+
+# Terminal 1 — start the signal server
+go run ./cmd/server
+
+# Terminal 2 — client A
+go run ./cmd/client -room-key=chat-room
+
+# Terminal 3 — client B
+go run ./cmd/client -room-key=chat-room
+```
+
+Once both clients register, type a message in either terminal:
+
+```
+> hello from client A!
+# Client B sees:
+# [MSG] 127.0.0.1:52431: hello from client A!
+```
+
+### 2. File Transfer
+
+In client A's terminal:
+
+```
+/send photo.jpg
+```
+
+Client B receives it chunk by chunk:
+
+```
+Receiving file 'photo.jpg' (48231 bytes, 95 chunks)
+Received chunk 1/95 for 'photo.jpg'
+...
+File 'photo.jpg' saved as 'received_photo.jpg' (48231 bytes)
+```
+
+### 3. Docker (no Go required)
+
+```bash
+docker-compose up -d
+docker-compose logs -f client1 client2
+
+# Both clients auto-register to "test-room" and start exchanging heartbeats
+```
+
+### 4. Multi-Network NAT Simulation
+
+```bash
+# Clients on separate Docker networks (simulates different NATs)
+docker-compose -f docker-compose.simple-test.yml up -d
+docker-compose -f docker-compose.simple-test.yml logs -f client1 client2
+```
+
+For advanced iptables-based NAT simulation (Linux only), see [NETWORK_TESTING.md](NETWORK_TESTING.md).
+
+### Interactive Commands
+
+```
+╔══════════════════════════════════════════╗
+║        UDP Hole Punch Client             ║
+╠══════════════════════════════════════════╣
+║  <message>     Send text to all peers    ║
+║  /send <file>  Send file to all peers    ║
+║  /peers        List connected peers      ║
+║  /help         Show this help            ║
+║  /quit         Disconnect and exit       ║
+╚══════════════════════════════════════════╝
+```
+
+### Client Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-signal-address` | Signal server address | `127.0.0.1:3986` |
+| `-local-address` | Local bind address | `0.0.0.0:0` (auto) |
+| `-room-key` | Room for peer discovery | `default` |
+
+---
+
+## Use as a Library
+
+```bash
+go get github.com/metnagaoglu/holepunch
+```
+
+Import only what you need — each package is independent:
+
+```go
+import "github.com/metnagaoglu/holepunch/peer"     // P2P client only
+import "github.com/metnagaoglu/holepunch/signal"   // Signal server only
+import "github.com/metnagaoglu/holepunch/protocol" // Shared types only
+```
+
+### Example: Embed a Signal Server
+
+```go
+package main
+
+import (
+    "log"
+    "os/signal"
+    "syscall"
+
+    "github.com/metnagaoglu/holepunch/signal"
+)
+
+func main() {
+    cfg := signal.DefaultConfig()
+    cfg.Port = 3986
+
+    srv, err := signal.NewServer(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    go srv.ListenAndServe()
+
+    // Wait for Ctrl+C
+    sig := make(chan os.Signal, 1)
+    signal.Notify(sig, syscall.SIGINT)
+    <-sig
+
+    srv.Shutdown()
+}
+```
+
+### Example: P2P Chat App
+
+```go
+package main
+
+import (
+    "bufio"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/metnagaoglu/holepunch/peer"
+)
+
+func main() {
+    client, err := peer.Connect("localhost:3986", "0.0.0.0:0", "my-room")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    // Print incoming messages
+    client.OnMessage(func(from string, text string) {
+        fmt.Printf("\n[%s]: %s\n> ", from, text)
+    })
+
+    go client.Listen()
+
+    // Read from stdin and send
+    scanner := bufio.NewScanner(os.Stdin)
+    fmt.Print("> ")
+    for scanner.Scan() {
+        client.Send(scanner.Text())
+        fmt.Print("> ")
+    }
+}
+```
+
+### Example: File Sync Tool
+
+```go
+client, _ := peer.Connect("signal.example.com:3986", "0.0.0.0:0", "sync-room")
+defer client.Close()
+
+go client.Listen()
+
+// Send a file to all peers in the room
+client.SendFile("backup.tar.gz")
+```
+
+### Example: Game Lobby with Custom Signal Server
+
+```go
+// Server side — embed in your game server
+cfg := signal.DefaultConfig()
+cfg.Port = 7777
+cfg.ClientTTL = 120  // 2 minute timeout for game sessions
+cfg.RepositoryType = "redis"
+cfg.RedisAddr = "redis:6379"
+
+srv, _ := signal.NewServer(cfg)
+go srv.ListenAndServe()
+
+// Client side — connect from game client
+client, _ := peer.Connect("game.example.com:7777", "0.0.0.0:0", "lobby-42")
+go client.Listen()
+
+client.OnMessage(func(from, text string) {
+    // Handle game state updates from peers
+    handleGameMessage(from, text)
+})
+
+// Send game state to peers
+client.Send(`{"action":"move","x":10,"y":20}`)
+```
+
+---
+
+## How It Works
 
 ```
 ┌─────────────┐         ┌─────────────┐
 │  Client A   │         │  Client B   │
 │  (NAT 1)    │         │  (NAT 2)    │
 └──────┬──────┘         └──────┬──────┘
-       │                       │
        │    1. Register        │
        ├──────────┐   ┌────────┤
        │          ▼   ▼        │
@@ -36,121 +242,40 @@ NAT hole punching allows two devices behind different NATs to establish a direct
        │◄─────────────────────►│
 ```
 
+1. Both clients register with the signal server
+2. Server shares each client's public IP:port with room members
+3. Clients send packets to each other's public addresses
+4. NAT devices see outgoing packets and allow return traffic
+
 ## Project Structure
 
 ```
-.
-├── server/                     # UDP Signaling Server
-│   ├── cmd/main.go             # Entry point
-│   └── pkg/
-│       ├── config/             # Environment-based configuration
-│       ├── handlers/           # Request handlers + HandlerContext (DI)
-│       ├── logger/             # Structured logging (slog)
-│       ├── models/             # Client, Request, HandlerFunc
-│       ├── repositories/       # IRepository + adapters (memory, redis)
-│       ├── router/             # Event routing
-│       └── server/             # UDP server with graceful shutdown
-├── client/                     # Interactive P2P Client
-│   ├── main.go                 # Entry point + interactive CLI
-│   ├── client.go               # Client lifecycle (register, listen, shutdown)
-│   ├── protocol.go             # Message types (text, file, heartbeat)
-│   ├── peers.go                # Peer tracking with dedup
-│   └── transfer.go             # Chunked file transfer
-├── docker-compose.yml          # Single network setup
-├── docker-compose.simple-test.yml
-└── docker-compose.separate-networks.yml
+github.com/metnagaoglu/holepunch/
+├── protocol/               # Shared message types (signal + peer)
+│   └── protocol.go
+├── signal/                 # Signal server library (importable)
+│   ├── server.go           # NewServer, ListenAndServe, Shutdown
+│   ├── config.go           # Config, LoadConfigFromEnv
+│   ├── logger.go           # InitLogger (slog)
+│   └── internal/           # Not importable by external code
+│       ├── handler/        # DI context, register/logout, validation
+│       ├── repository/     # Repository interface
+│       └── repository/adapters/  # memory, redis
+├── peer/                   # P2P client library (importable)
+│   ├── client.go           # Connect, Send, SendFile, Listen, OnMessage
+│   ├── peers.go            # PeerManager (thread-safe tracking)
+│   └── transfer.go         # Chunked file transfer
+├── cmd/
+│   ├── server/main.go      # CLI wrapper (~40 lines)
+│   └── client/main.go      # CLI wrapper (~90 lines)
+├── server/Dockerfile
+├── client/Dockerfile
+└── docker-compose.yml
 ```
-
-## Quick Start
-
-### Prerequisites
-
-- Go 1.23+
-- Docker & Docker Compose (optional)
-
-### Build
-
-```bash
-# Server
-cd server && go build -o udp-server ./cmd
-
-# Client
-cd client && go build -o udp-client .
-```
-
-### Run Locally
-
-```bash
-# Terminal 1: Start the server
-cd server && go run ./cmd
-
-# Terminal 2: Client A
-cd client && go run . -room-key=my-room
-
-# Terminal 3: Client B
-cd client && go run . -room-key=my-room
-```
-
-Clients automatically get a free port from the OS. Once both register to the same room, they discover each other and can communicate.
-
-## Client Usage
-
-After connecting, the client provides an interactive CLI:
-
-```
-╔══════════════════════════════════════════╗
-║        UDP Hole Punch Client             ║
-╠══════════════════════════════════════════╣
-║  <message>     Send text to all peers    ║
-║  /send <file>  Send file to all peers    ║
-║  /peers        List connected peers      ║
-║  /help         Show this help            ║
-║  /quit         Disconnect and exit       ║
-╚══════════════════════════════════════════╝
-```
-
-### Text Messaging
-
-```
-hello world          # Sends "hello world" to all peers
-```
-
-Output on the receiving side:
-```
-[MSG] 192.168.1.5:52431: hello world
-```
-
-### File Transfer
-
-```
-/send photo.jpg      # Sends photo.jpg to all peers (chunked UDP)
-```
-
-Files are split into 512-byte chunks, base64-encoded, and reassembled on the receiving end. Received files are saved as `received_<filename>` in the working directory.
-
-### Peer Management
-
-```
-/peers               # Shows connected peers with last-seen time
-```
-
-```
-Connected peers (2):
-  - 192.168.1.5:52431 (last seen: 3s ago)
-  - 192.168.1.8:49012 (last seen: 1s ago)
-```
-
-### Client Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-signal-address` | Signal server address | `127.0.0.1:3986` |
-| `-local-address` | Local bind address | `0.0.0.0:0` (auto) |
-| `-room-key` | Room for peer discovery | `default` |
 
 ## Server Configuration
 
-All configuration via environment variables:
+All via environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -158,111 +283,57 @@ All configuration via environment variables:
 | `SERVER_HOST` | Bind address | `0.0.0.0` |
 | `BUFFER_SIZE` | UDP buffer size | `1024` |
 | `CLIENT_TTL` | Registration TTL (seconds) | `60` |
-| `REPOSITORY_TYPE` | Storage backend | `memory` |
+| `REPOSITORY_TYPE` | Storage backend (`memory`/`redis`) | `memory` |
 | `REDIS_ADDR` | Redis address | `localhost:6379` |
 | `REDIS_PASSWORD` | Redis password | (empty) |
 | `REDIS_DB` | Redis database | `0` |
-| `LOG_LEVEL` | Log level | `info` |
+| `LOG_LEVEL` | Log level (`debug`/`info`/`warn`/`error`) | `info` |
 | `LOG_FORMAT` | Log format (`text`/`json`) | `text` |
-
-### Structured Logging
-
-```bash
-# Development (human-readable)
-LOG_LEVEL=debug go run ./cmd
-
-# Production (JSON for log aggregation)
-LOG_FORMAT=json LOG_LEVEL=info go run ./cmd
-```
-
-## Docker Deployment
-
-### Quick Start
-
-```bash
-# Start server + two clients + redis
-docker-compose up -d
-
-# Watch the logs
-docker-compose logs -f client1 client2
-
-# Stop everything
-docker-compose down
-```
-
-### Multi-Network Testing
-
-```bash
-# Clients on separate networks (simulates different NATs)
-docker-compose -f docker-compose.simple-test.yml up -d
-docker-compose -f docker-compose.simple-test.yml logs -f client1 client2
-```
-
-For advanced NAT simulation with iptables (Linux only), see [NETWORK_TESTING.md](NETWORK_TESTING.md).
 
 ## Protocol
 
 ### Signal Server Events
-
-Client-server communication uses JSON events:
 
 ```json
 {"event": "register", "payload": "{\"local_ip\":\"0.0.0.0:4000\",\"key\":\"my-room\"}"}
 {"event": "logout",   "payload": "{\"local_ip\":\"0.0.0.0:4000\",\"key\":\"my-room\"}"}
 ```
 
-The server responds with a comma-separated peer list:
-```
-192.168.1.10:4000,192.168.1.20:4001
-```
+Response: comma-separated peer list `192.168.1.10:4000,192.168.1.20:4001`
 
 ### Peer-to-Peer Messages
-
-Peers communicate using structured JSON:
 
 ```json
 {"type": "heartbeat", "from": "192.168.1.10:4000"}
 {"type": "text",      "from": "192.168.1.10:4000", "payload": "hello"}
-{"type": "file",      "from": "192.168.1.10:4000", "payload": "{\"name\":\"photo.jpg\",\"size\":1024,\"total_chunks\":2}"}
-{"type": "file_chunk","from": "192.168.1.10:4000", "payload": "{\"name\":\"photo.jpg\",\"index\":0,\"total\":2,\"data\":\"base64...\"}"}
-{"type": "file_ack",  "from": "192.168.1.10:4000", "payload": "{\"name\":\"photo.jpg\",\"success\":true}"}
+{"type": "file",      "from": "...", "payload": "{\"name\":\"photo.jpg\",\"size\":1024,\"total_chunks\":2}"}
+{"type": "file_chunk","from": "...", "payload": "{\"name\":\"photo.jpg\",\"index\":0,\"total\":2,\"data\":\"base64...\"}"}
+{"type": "file_ack",  "from": "...", "payload": "{\"name\":\"photo.jpg\",\"success\":true}"}
 ```
 
-## Server Architecture
+## Architecture
 
-Key design decisions:
-
-- **Dependency Injection**: `HandlerContext` carries repository + connection, no global state
-- **Thread Safety**: `sync.RWMutex` on in-memory repository, mutex on server client map
-- **TTL with Refresh**: Active clients extend their TTL on every message; idle clients expire and get cleaned up by a background goroutine
+- **Dependency Injection**: Handler context carries repository + connection, no global state
+- **Thread Safety**: `sync.RWMutex` on in-memory repository
+- **TTL with Refresh**: Active clients extend TTL on every message; idle clients expire via background goroutine
 - **Input Validation**: Room keys validated (max 64 chars, alphanumeric + hyphen/underscore)
-- **Graceful Shutdown**: Signal handling (SIGINT/SIGTERM), context cancellation, resource cleanup
+- **Graceful Shutdown**: Signal handling, context cancellation, resource cleanup
+- **`internal/` packages**: Implementation details hidden from library consumers
 
 ## Development
 
 ```bash
-cd server
+# Build
+go build -o /dev/null ./cmd/server
+go build -o /dev/null ./cmd/client
 
-# Run tests
+# Test
 go test -race ./...
 
-# Run tests with coverage
-go test -race -cover ./...
-
-# Lint (requires golangci-lint)
-golangci-lint run
-
-# Static analysis
+# Vet
 go vet ./...
 ```
 
-## Security Notes
-
-- The signaling server should be behind a firewall in production
-- Consider authentication for room registration
-- UDP traffic is unencrypted; use DTLS for sensitive data
-- Room key validation prevents injection but rate limiting is not yet implemented
-
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT - see [LICENSE](LICENSE) for details.
