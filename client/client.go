@@ -3,97 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 )
 
 const (
-	// Default configuration values
-	defaultSignalAddress = "127.0.0.1:3986"
-	defaultLocalAddress  = "127.0.0.1:4000"
-	defaultRoomKey       = "default"
-
-	// Protocol constants
-	messageHello         = "Hello!"
-	eventRegister        = "register"
-	eventLogout          = "logout"
-
-	// Timing constants
-	heartbeatInterval    = 5 * time.Second
-	shutdownTimeout      = 3 * time.Second
+	heartbeatInterval = 10 * time.Second
+	shutdownTimeout   = 3 * time.Second
+	maxBufferSize     = 65535
 )
-
-type RegisterRequest struct {
-	LocalIp string `json:"local_ip"`
-	Key     string `json:"key"`
-}
-
-type LogoutRequest struct {
-	LocalIp string `json:"local_ip"`
-	Key     string `json:"key"`
-}
-
-type Event struct {
-	Event   string `json:"event"`
-	Payload string `json:"payload"`
-}
 
 // Client represents a UDP hole punching client
 type Client struct {
-	conn          *net.UDPConn
-	remote        *net.UDPAddr
-	local         *net.UDPAddr
-	roomKey       string
-	ctx           context.Context
-	cancel        context.CancelFunc
-}
-
-func main() {
-	// Parse command-line flags
-	signalAddressPtr := flag.String("signal-address", defaultSignalAddress, "Signal server address")
-	localAddressPtr := flag.String("local-address", defaultLocalAddress, "Local address")
-	roomKeyAddressPtr := flag.String("room-key", defaultRoomKey, "Room key")
-	flag.Parse()
-
-	// Create client
-	client, err := NewClient(*signalAddressPtr, *localAddressPtr, *roomKeyAddressPtr)
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	// Register with server
-	if err := client.Register(); err != nil {
-		log.Fatalf("Failed to register: %v", err)
-	}
-
-	// Setup graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// Start listening in goroutine
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- client.Listen()
-	}()
-
-	// Wait for shutdown signal or error
-	select {
-	case sig := <-sigChan:
-		log.Printf("Received signal: %v, shutting down gracefully...", sig)
-		client.Shutdown()
-	case err := <-errChan:
-		if err != nil {
-			log.Printf("Listen error: %v", err)
-		}
-	}
+	conn     *net.UDPConn
+	remote   *net.UDPAddr
+	local    *net.UDPAddr
+	roomKey  string
+	peers    *PeerManager
+	transfer *FileTransfer
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // NewClient creates a new UDP client
@@ -115,45 +47,42 @@ func NewClient(signalAddress, localAddress, roomKey string) (*Client, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	log.Printf("Client initialized - Local: %s, Signal: %s, Room: %s",
-		local.String(), remote.String(), roomKey)
+	// Get actual bound address (important when using port 0)
+	boundAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	log.Printf("Client initialized - Bound: %s, Signal: %s, Room: %s",
+		boundAddr.String(), remote.String(), roomKey)
 
 	return &Client{
-		conn:    conn,
-		remote:  remote,
-		local:   local,
-		roomKey: roomKey,
-		ctx:     ctx,
-		cancel:  cancel,
+		conn:     conn,
+		remote:   remote,
+		local:    boundAddr,
+		roomKey:  roomKey,
+		peers:    NewPeerManager(),
+		transfer: NewFileTransfer(),
+		ctx:      ctx,
+		cancel:   cancel,
 	}, nil
 }
 
 // Register sends registration request to server
 func (c *Client) Register() error {
-	register, err := json.Marshal(RegisterRequest{
+	payload, _ := json.Marshal(SignalRequest{
 		LocalIp: c.local.String(),
 		Key:     c.roomKey,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal register request: %w", err)
-	}
 
-	jsonRegister, err := json.Marshal(Event{
-		Event:   eventRegister,
-		Payload: string(register),
+	event, _ := json.Marshal(SignalEvent{
+		Event:   EventRegister,
+		Payload: string(payload),
 	})
-	if err != nil {
-		return fmt.Errorf("failed to marshal register event: %w", err)
-	}
 
 	log.Printf("Registering to room '%s'...", c.roomKey)
 
-	n, err := c.conn.WriteTo(jsonRegister, c.remote)
+	_, err := c.conn.WriteTo(event, c.remote)
 	if err != nil {
 		return fmt.Errorf("failed to send register: %w", err)
 	}
-
-	log.Printf("Registration sent (%d bytes)", n)
 	return nil
 }
 
@@ -161,111 +90,200 @@ func (c *Client) Register() error {
 func (c *Client) Listen() error {
 	log.Println("Listening for incoming messages...")
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, maxBufferSize)
 	for {
 		select {
 		case <-c.ctx.Done():
 			return nil
 		default:
-			// Set read deadline to allow context cancellation
-			c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-			n, addr, err := c.conn.ReadFromUDP(buffer)
-			if err != nil {
-				// Check if it's a timeout (expected for graceful shutdown)
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				return fmt.Errorf("read error: %w", err)
-			}
-
-			message := string(buffer[:n])
-			c.handleMessage(message, addr)
 		}
+
+		c.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+
+		n, addr, err := c.conn.ReadFromUDP(buffer)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			return fmt.Errorf("read error: %w", err)
+		}
+
+		c.handleMessage(buffer[:n], addr)
 	}
 }
 
-// handleMessage processes incoming messages
-func (c *Client) handleMessage(message string, addr *net.UDPAddr) {
-	log.Printf("[INCOMING] From %s: %s", addr.String(), message)
-
-	// Handle heartbeat message
-	if message == messageHello {
-		log.Printf("Received heartbeat from %s", addr.String())
+// handleMessage routes incoming messages
+func (c *Client) handleMessage(data []byte, addr *net.UDPAddr) {
+	// Try to parse as peer message first
+	msg, err := decodePeerMessage(data)
+	if err == nil && msg.Type != "" {
+		c.handlePeerMessage(msg, addr)
 		return
 	}
 
-	// Handle peer list from server
+	// Otherwise treat as peer list from signal server
+	c.handlePeerList(string(data), addr)
+}
+
+// handlePeerList processes comma-separated peer addresses from the signal server
+func (c *Client) handlePeerList(message string, _ *net.UDPAddr) {
 	peers := strings.Split(message, ",")
 	for _, peerAddr := range peers {
 		peerAddr = strings.TrimSpace(peerAddr)
-		if peerAddr == "" || peerAddr == c.local.String() {
+		if peerAddr == "" {
 			continue
 		}
 
-		log.Printf("Discovered peer: %s, starting communication...", peerAddr)
-		go c.startPeerCommunication(peerAddr)
+		// Skip our own address
+		if peerAddr == c.local.String() {
+			continue
+		}
+
+		resolved, err := net.ResolveUDPAddr("udp", peerAddr)
+		if err != nil {
+			log.Printf("Failed to resolve peer address %s: %v", peerAddr, err)
+			continue
+		}
+
+		// Only start heartbeat if this is a new peer
+		isNew := c.peers.AddOrUpdate(resolved)
+		if isNew {
+			log.Printf("Discovered new peer: %s", peerAddr)
+			go c.heartbeatLoop(resolved)
+		}
 	}
 }
 
-// startPeerCommunication initiates communication with a peer
-func (c *Client) startPeerCommunication(peerAddress string) {
-	addr, err := net.ResolveUDPAddr("udp", peerAddress)
-	if err != nil {
-		log.Printf("Failed to resolve peer address %s: %v", peerAddress, err)
-		return
-	}
+// handlePeerMessage processes structured messages from peers
+func (c *Client) handlePeerMessage(msg *PeerMessage, addr *net.UDPAddr) {
+	// Update peer tracking
+	c.peers.AddOrUpdate(addr)
 
+	switch msg.Type {
+	case MsgHeartbeat:
+		// silently accept
+
+	case MsgText:
+		log.Printf("[MSG] %s: %s", addr, msg.Payload)
+
+	case MsgFile:
+		var header FileHeader
+		if err := json.Unmarshal([]byte(msg.Payload), &header); err != nil {
+			log.Printf("Invalid file header from %s: %v", addr, err)
+			return
+		}
+		c.transfer.HandleFileHeader(&header)
+
+	case MsgFileChunk:
+		var chunk FileChunk
+		if err := json.Unmarshal([]byte(msg.Payload), &chunk); err != nil {
+			log.Printf("Invalid file chunk from %s: %v", addr, err)
+			return
+		}
+		complete, err := c.transfer.HandleFileChunk(&chunk)
+		if err != nil {
+			log.Printf("File chunk error: %v", err)
+			return
+		}
+		if complete {
+			// Send ack
+			ack, _ := json.Marshal(FileAck{Name: chunk.Name, Success: true})
+			reply, _ := encodePeerMessage(MsgFileAck, c.local.String(), string(ack))
+			c.conn.WriteTo(reply, addr)
+		}
+
+	case MsgFileAck:
+		var ack FileAck
+		if err := json.Unmarshal([]byte(msg.Payload), &ack); err == nil {
+			log.Printf("File '%s' acknowledged by %s (success: %v)", ack.Name, addr, ack.Success)
+		}
+
+	default:
+		log.Printf("Unknown message type '%s' from %s", msg.Type, addr)
+	}
+}
+
+// heartbeatLoop sends periodic heartbeats to a peer
+func (c *Client) heartbeatLoop(addr *net.UDPAddr) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+
+	// Send initial heartbeat immediately
+	c.sendHeartbeat(addr)
 
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := c.conn.WriteTo([]byte(messageHello), addr)
-			if err != nil {
-				log.Printf("Failed to send to peer %s: %v", peerAddress, err)
-				return
-			}
-			log.Printf("Sent heartbeat to %s (%d bytes)", peerAddress, n)
+			c.sendHeartbeat(addr)
+		}
+	}
+}
+
+func (c *Client) sendHeartbeat(addr *net.UDPAddr) {
+	msg, _ := encodePeerMessage(MsgHeartbeat, c.local.String(), "")
+	if _, err := c.conn.WriteTo(msg, addr); err != nil {
+		log.Printf("Heartbeat failed to %s: %v", addr, err)
+	}
+}
+
+// SendText sends a text message to all connected peers
+func (c *Client) SendText(text string) {
+	msg, _ := encodePeerMessage(MsgText, c.local.String(), text)
+	peers := c.peers.GetAll()
+
+	if len(peers) == 0 {
+		log.Println("No peers connected")
+		return
+	}
+
+	for _, p := range peers {
+		if _, err := c.conn.WriteTo(msg, p.Addr); err != nil {
+			log.Printf("Failed to send to %s: %v", p.Addr, err)
+		}
+	}
+	log.Printf("Sent to %d peer(s)", len(peers))
+}
+
+// SendFile sends a file to all connected peers
+func (c *Client) SendFile(filePath string) {
+	peers := c.peers.GetAll()
+
+	if len(peers) == 0 {
+		log.Println("No peers connected")
+		return
+	}
+
+	for _, p := range peers {
+		if err := c.transfer.SendFile(c.conn, p.Addr, c.local.String(), filePath); err != nil {
+			log.Printf("Failed to send file to %s: %v", p.Addr, err)
 		}
 	}
 }
 
 // Shutdown performs graceful shutdown
 func (c *Client) Shutdown() {
-	log.Println("Initiating shutdown...")
+	log.Println("Shutting down...")
 
-	// Send logout request
-	logout, err := json.Marshal(LogoutRequest{
+	// Send logout to signal server
+	payload, _ := json.Marshal(SignalRequest{
 		LocalIp: c.local.String(),
 		Key:     c.roomKey,
 	})
-	if err != nil {
-		log.Printf("Failed to marshal logout request: %v", err)
+	event, _ := json.Marshal(SignalEvent{
+		Event:   EventLogout,
+		Payload: string(payload),
+	})
+
+	if _, err := c.conn.WriteTo(event, c.remote); err != nil {
+		log.Printf("Failed to send logout: %v", err)
 	} else {
-		jsonLogout, err := json.Marshal(Event{
-			Event:   eventLogout,
-			Payload: string(logout),
-		})
-		if err != nil {
-			log.Printf("Failed to marshal logout event: %v", err)
-		} else {
-			n, err := c.conn.WriteTo(jsonLogout, c.remote)
-			if err != nil {
-				log.Printf("Failed to send logout: %v", err)
-			} else {
-				log.Printf("Logout sent (%d bytes)", n)
-			}
-		}
+		log.Println("Logout sent")
 	}
 
-	// Cancel context and wait for goroutines
 	c.cancel()
 	time.Sleep(shutdownTimeout)
-
 	log.Println("Shutdown complete")
 }
 

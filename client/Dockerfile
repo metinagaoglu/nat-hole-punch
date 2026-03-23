@@ -9,10 +9,10 @@ RUN apk add --no-cache git ca-certificates
 WORKDIR /build
 
 # Copy source code
-COPY client.go .
+COPY go.mod ./
+COPY *.go ./
 
 # Download dependencies (if any)
-RUN go mod init client 2>/dev/null || true
 RUN go mod tidy 2>/dev/null || true
 
 # Build the application with optimizations
@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a \
     -o udp-client \
-    client.go
+    .
 
 # Stage 2: Runtime
 FROM scratch
@@ -38,4 +38,4 @@ USER 65534:65534
 ENTRYPOINT ["/udp-client"]
 
 # Default flags (can be overridden)
-CMD ["-signal-address=udp-server:3986", "-local-address=0.0.0.0:4000", "-room-key=default"]
+CMD ["-signal-address=udp-server:3986", "-local-address=0.0.0.0:0", "-room-key=default"]
